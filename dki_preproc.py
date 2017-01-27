@@ -1,5 +1,5 @@
 import nipype.pipeline.engine as pe
-from nipype.interfaces import afni,fsl
+from nipype.interfaces import afni,fsl,ants,dipy
 import nipype.interfaces.io as nio
 import nipype.interfaces.utility as util
 import nipype
@@ -14,13 +14,14 @@ preproc.base_dir = workdir
 
 ipdir='/home/davidoconner/hbnssi_rawdata/'
 sublist=[g.split('/')[-2] for g in glob.glob(ipdir+'*/')]
-seslist=list(set([g.split('/')[-2] for g in glob.glob(ipdir+'*/*/')]))
+seslist=['ses-SSV1']#list(set([g.split('/')[-2] for g in glob.glob(ipdir+'*/*/')]))
 
 # Topup Acquisition Parameters
 #acqparm='0 -1 0 0.0684\n0 1 0 0.0684'
 #index=' '.join([1 for x in range(0,numvols)])
 
-
+# BBR Schedule
+bbrsched='/usr/share/fsl/5.0/etc/flirtsch/bbr.sch'
 ## Setup data managment nodes
 
 infosource = pe.Node(util.IdentityInterface(fields=['subject_id','session_id']),name="infosource")
@@ -31,15 +32,87 @@ templates={
 'bvals' : ipdir+'{subject_id}/{session_id}/dwi/{subject_id}_{session_id}_acq-DKI64DIRECTIONSAP3WEIGHTSAX_dwi.bval', \
 'bvecs' : ipdir+'{subject_id}/{session_id}/dwi/{subject_id}_{session_id}_acq-DKI64DIRECTIONSAP3WEIGHTSAX_dwi.bvec', \
 'b0ap' : ipdir+'{subject_id}/{session_id}/dwi/{subject_id}_{session_id}_acq-DWIB0APAX_dwi.nii.gz', \
-'b0pa' : ipdir+'{subject_id}/{session_id}/dwi/{subject_id}_{session_id}_acq-DWIB0PAAX_dwi.nii.gz'
+'b0pa' : ipdir+'{subject_id}/{session_id}/dwi/{subject_id}_{session_id}_acq-DWIB0PAAX_dwi.nii.gz', \
+'anat' : ipdir+'{subject_id}/{session_id}/anat/{subject_id}_{session_id}_acq-MEMPRAGE_T1w.nii.gz'
 }
 
 selectfiles = pe.Node(nio.SelectFiles(templates,base_directory=ipdir),name="selectfiles")
 
 datasink = pe.Node(nio.DataSink(base_directory=globaldir, container=workdir),name="datasink")
 
-## Diffusion Tensor Computation
 
+
+## Anat Preproc
+# Skullstrip  MPRAGE
+anat_skullstrip = pe.Node(interface=afni.preprocess.SkullStrip(),
+                                  name='anat_skullstrip')
+anat_skullstrip.inputs.args = '-o_ply'
+anat_skullstrip.inputs.outputtype = 'NIFTI_GZ'
+
+
+# Mask MPRAGE
+anat_brain_only = pe.Node(interface=afni.preprocess.Calc(),
+                        name='anat_brain_only')
+anat_brain_only.inputs.expr = 'a*step(b)'
+anat_brain_only.inputs.outputtype = 'NIFTI_GZ'
+
+
+# Calculate ANTs Warp
+calculate_ants_warp = pe.Node(interface=ants.Registration(),
+            name='calculate_ants_warp')
+
+
+calculate_ants_warp.inputs. \
+	fixed_image = '/usr/share/fsl/5.0/data/standard/MNI152_T1_3mm_brain.nii.gz'
+calculate_ants_warp.inputs. \
+	dimension = 3
+calculate_ants_warp.inputs. \
+    use_histogram_matching=[ True, True, True ]
+calculate_ants_warp.inputs. \
+    winsorize_lower_quantile = 0.01
+calculate_ants_warp.inputs. \
+    winsorize_upper_quantile = 0.99
+calculate_ants_warp.inputs. \
+    metric = ['MI','MI','CC']
+calculate_ants_warp.inputs. \
+	metric_weight = [1,1,1]
+calculate_ants_warp.inputs. \
+    radius_or_number_of_bins = [32,32,4]
+calculate_ants_warp.inputs. \
+    sampling_strategy = ['Regular','Regular',None]
+calculate_ants_warp.inputs. \
+    sampling_percentage = [0.25,0.25,None]
+calculate_ants_warp.inputs. \
+    number_of_iterations = [[1000,500,250,100], \
+    [1000,500,250,100], [100,100,70,20]]
+calculate_ants_warp.inputs. \
+    convergence_threshold = [1e-8,1e-8,1e-9]
+calculate_ants_warp.inputs. \
+    convergence_window_size = [10,10,15]
+calculate_ants_warp.inputs. \
+    transforms = ['Rigid','Affine','SyN']
+calculate_ants_warp.inputs. \
+    transform_parameters = [[0.1],[0.1],[0.1,3,0]]
+calculate_ants_warp.inputs. \
+    shrink_factors = [[8,4,2,1],[8,4,2,1],[6,4,2,1]]
+calculate_ants_warp.inputs. \
+    smoothing_sigmas = [[3,2,1,0],[3,2,1,0],[3,2,1,0]]
+calculate_ants_warp.inputs. \
+    sigma_units = ['vox','vox','vox']
+calculate_ants_warp.inputs. \
+	output_warped_image = True
+calculate_ants_warp.inputs. \
+	output_inverse_warped_image = True
+calculate_ants_warp.inputs. \
+	output_transform_prefix = 'xfm'
+calculate_ants_warp.inputs. \
+	write_composite_transform = True
+calculate_ants_warp.inputs. \
+collapse_output_transforms = False
+
+
+
+## Diffusion Tensor Computation
 
 fslroi = pe.Node(interface=fsl.ExtractROI(), name='fslroi')
 fslroi.inputs.t_min = 0
@@ -79,14 +152,47 @@ eddycorrect.inputs.in_acqp  = '/home/davidoconner/git/dki_preproc/acqparams.txt'
 eddycorrect.threads = 2
 #eddy --imain=data --mask=my_hifi_b0_brain_mask --acqp=acqparams.txt --index=index.txt --bvecs=bvecs --bvals=bvals --topup=my_topup_results --out=eddy_corrected_data
 
+fslroi_b0corr = pe.Node(interface=fsl.ExtractROI(), name='fslroi_b0corr')
+fslroi_b0corr.inputs.t_min = 0
+fslroi_b0corr.inputs.t_size = 1
+
+## B0 to Anat
+linear_reg_b0 = pe.Node(interface=fsl.FLIRT(), name='linear_reg_b0')
+linear_reg_b0.inputs.cost = 'bbr'
+linear_reg_b0.inputs.dof = 6
+linear_reg_b0.inputs.interp = 'nearestneighbour'
+
+
+## Apply XFM
+app_xfm_lin = pe.Node(interface=fsl.ApplyXfm(),
+                         name='app_xfm_lin')
+app_xfm_lin.inputs.apply_xfm = True
+
+    
+## Func to MNI
+b0_t1_to_mni = pe.Node(interface=ants.ApplyTransforms(), name='b0_t1_to_mni')
+b0_t1_to_mni.inputs.dimension = 4
+b0_t1_to_mni.inputs.reference_image='/usr/share/fsl/5.0/data/standard/MNI152_T1_3mm_brain.nii.gz'
+b0_t1_to_mni.inputs.invert_transform_flags = [False]
+b0_t1_to_mni.inputs.interpolation = 'NearestNeighbor'
+
+
 
 dtifit = pe.Node(interface=fsl.DTIFit(), name='dtifit')
 
+dtifit_norm = pe.Node(interface=fsl.DTIFit(), name='dtifit_norm')
+
+
+#dkifit = pe.Node(interface=dipy.DKI(), name='dkifit')
+
 preproc.connect([
+
+
 
 	(infosource,selectfiles,[('subject_id', 'subject_id'),('session_id', 'session_id')]),
     (selectfiles,fslroi,[('dki','in_file')]),
     (fslroi, bet, [('roi_file', 'in_file')]),
+
     (selectfiles,mergelistb0,[('b0ap','in1')]),
     (selectfiles,mergelistb0,[('b0pa','in2')]),
     (mergelistb0,b0merge,[('out','in_files')]),
@@ -118,7 +224,44 @@ preproc.connect([
     (dtifit,datasink,[('V1','@dtifitV1')]),
     (dtifit,datasink,[('V2','@dtifitV2')]),
     (dtifit,datasink,[('V3','@dtifitV3')]),
-    (dtifit,datasink,[('tensor','@dtifittensor')])
+    (dtifit,datasink,[('tensor','@dtifittensor')]),
+
+
+    (selectfiles, anat_skullstrip, [('anat','in_file')]),
+    (selectfiles, anat_brain_only, [('anat','in_file_a')]),
+    (anat_skullstrip, anat_brain_only, [('out_file', 'in_file_b')]),
+                               
+    (anat_brain_only, calculate_ants_warp, [('out_file',  'moving_image')]),
+
+
+    (eddycorrect,fslroi_b0corr,[('out_corrected','in_file')]),
+    (fslroi_b0corr, linear_reg_b0, [('roi_file', 'in_file')]),
+    (anat_brain_only, linear_reg_b0,[('out_file', 'reference')]),
+
+    (eddycorrect, app_xfm_lin, [('out_corrected','in_file')]),
+    (anat_brain_only, app_xfm_lin, [('out_file','reference')]),
+    (linear_reg_b0, app_xfm_lin, [('out_matrix_file','in_matrix_file')]),
+    (calculate_ants_warp, b0_t1_to_mni, [('composite_transform', 'transforms')]),
+    (app_xfm_lin, b0_t1_to_mni, [('out_file','input_image')]),
+    (b0_t1_to_mni,datasink, [('output_image','@dkimni')] )
+
+    #(bet, dtifit, [('mask_file', 'mask')]),
+    #(selectfiles, dtifit, [('bvals', 'bvals')]),
+    #(selectfiles, dtifit, [('bvecs', 'bvecs')]),
+
+    #(eddycorrect, dkifit, [('out_corrected', 'in_file')]),
+    #(selectfiles, dkifit, [('bvals', 'in_bval')]),
+    #(selectfiles, dkifit, [('bvecs', 'in_bvec')]),
+
+    #(dkifit,datasink,[('fa','@dkifitFA')]),
+    #(dkifit,datasink,[('md','@dkifitMD')]),
+    #(dkifit,datasink,[('rd','@dkifitRD')]),
+    #(dkifit,datasink,[('ad','@dkifitAD')])#,
+    #(dkifit,datasink,[('mk','@dkifitMK')]),
+    #(dkifit,datasink,[('ak','@dkifitAK')]),
+    #(dkifit,datasink,[('rk','@dkifitRK')])
+
+
 ])
 
 preproc.run('MultiProc',plugin_args={'n_procs':4})
