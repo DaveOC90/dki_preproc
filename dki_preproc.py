@@ -6,6 +6,34 @@ import nipype
 import os,glob,sys
 from nipype.workflows.dmri.fsl.dti import create_eddy_correct_pipeline
 
+
+
+
+def hex2float(inmat):
+    '''
+    Function to convert matrices in hexadecimal format to floating point format
+    Input: double space delimited .mat file from FSL
+    Ouput: double space delimited .mat file
+    '''
+    # Read in data as list of lists, seperating strings based on double spaces and newline characters
+    data=[l.strip().split('  ') for l in open(inmat,'rU')]
+    # convert each element to float
+    datanew=[map(lambda x: float.fromhex(x),d) for d in data]
+    # turn list of lists back into one long string
+    opdatanew='\n'.join(['  '.join(map(str,d)) for d in datanew])
+    # write mat to same directory as input mat
+    opname=inmat.replace('.mat','_float.mat')
+    # write string
+    fo=open(opname,'w')
+    fo.write(opdatanew)
+    fo.close()
+
+    return opname
+
+hexmat2fltmat = util.Function(input_names=["inmat"], output_names=["opmat"],function=hex2float)
+
+
+
 ## Intialize variables and workflow
 globaldir='/home/davidoconner/dki_preproc/'
 workdir='/home/davidoconner/dki_preproc/working'
@@ -57,15 +85,35 @@ anat_brain_only.inputs.expr = 'a*step(b)'
 anat_brain_only.inputs.outputtype = 'NIFTI_GZ'
 
 
+
+# FAST Node
+segment=pe.Node(interface = fsl.FAST(), name='segment')
+segment.inputs.img_type = 1
+segment.inputs.segments = True
+segment.inputs.probability_maps = True
+segment.inputs.out_basename = 'segment'
+
+# Split fast prob maps, picking wm
+wmprob_split = pe.Node(interface=util.Select(), name = 'wmprob_split')
+wmprob_split.inputs.index=2
+
+
+
+wmmapbin = pe.Node(interface=fsl.maths.MathsCommand(),name='wmmapbin')
+#fslmaths opname_fast_pve_2 -thr 0.5 -bin opname_fast_wmseg
+# in_file -> out_file
+wmmapbin.inputs.args='-thr 0.5 -bin'
+
+
 # Calculate ANTs Warp
 calculate_ants_warp = pe.Node(interface=ants.Registration(),
             name='calculate_ants_warp')
 
 
 calculate_ants_warp.inputs. \
-	fixed_image = '/usr/share/fsl/5.0/data/standard/MNI152_T1_3mm_brain.nii.gz'
+    fixed_image = '/usr/share/fsl/5.0/data/standard/MNI152_T1_3mm_brain.nii.gz'
 calculate_ants_warp.inputs. \
-	dimension = 3
+    dimension = 3
 calculate_ants_warp.inputs. \
     use_histogram_matching=[ True, True, True ]
 calculate_ants_warp.inputs. \
@@ -75,7 +123,7 @@ calculate_ants_warp.inputs. \
 calculate_ants_warp.inputs. \
     metric = ['MI','MI','CC']
 calculate_ants_warp.inputs. \
-	metric_weight = [1,1,1]
+    metric_weight = [1,1,1]
 calculate_ants_warp.inputs. \
     radius_or_number_of_bins = [32,32,4]
 calculate_ants_warp.inputs. \
@@ -100,15 +148,16 @@ calculate_ants_warp.inputs. \
 calculate_ants_warp.inputs. \
     sigma_units = ['vox','vox','vox']
 calculate_ants_warp.inputs. \
-	output_warped_image = True
+    output_warped_image = True
 calculate_ants_warp.inputs. \
-	output_inverse_warped_image = True
+    output_inverse_warped_image = True
 calculate_ants_warp.inputs. \
-	output_transform_prefix = 'xfm'
+    output_transform_prefix = 'xfm'
 calculate_ants_warp.inputs. \
-	write_composite_transform = True
+    write_composite_transform = True
 calculate_ants_warp.inputs. \
 collapse_output_transforms = False
+
 
 
 
@@ -150,11 +199,26 @@ eddycorrect = pe.Node(interface=fsl.Eddy(), name='eddycorrect')
 eddycorrect.inputs.in_index = '/home/davidoconner/git/dki_preproc/index.txt'
 eddycorrect.inputs.in_acqp  = '/home/davidoconner/git/dki_preproc/acqparams.txt'
 eddycorrect.threads = 2
-#eddy --imain=data --mask=my_hifi_b0_brain_mask --acqp=acqparams.txt --index=index.txt --bvecs=bvecs --bvals=bvals --topup=my_topup_results --out=eddy_corrected_data
+#eddy --imain=data --mask=my_hifi_b0_brain_mask --acqp=acqparafslviewms.txt --index=index.txt --bvecs=bvecs --bvals=bvals --topup=my_topup_results --out=eddy_corrected_data
 
 fslroi_b0corr = pe.Node(interface=fsl.ExtractROI(), name='fslroi_b0corr')
 fslroi_b0corr.inputs.t_min = 0
 fslroi_b0corr.inputs.t_size = 1
+
+## COnvert eddy mat to float
+h2f = pe.Node(interface=hexmat2fltmat,name='h2f')
+
+## COnvert b0 flirt to anat initialization mat to float
+h2f2 = pe.Node(interface=hexmat2fltmat,name='h2f2')
+
+
+
+## B0 to Anat Initial mat
+linear_reg_b0_init = pe.Node(interface=fsl.FLIRT(), name='linear_reg_b0_init')
+linear_reg_b0_init.inputs.cost = 'corratio'
+linear_reg_b0_init.inputs.dof = 6
+linear_reg_b0_init.inputs.interp = 'trilinear'
+
 
 ## B0 to Anat
 linear_reg_b0 = pe.Node(interface=fsl.FLIRT(), name='linear_reg_b0')
@@ -171,10 +235,11 @@ app_xfm_lin.inputs.apply_xfm = True
     
 ## Func to MNI
 b0_t1_to_mni = pe.Node(interface=ants.ApplyTransforms(), name='b0_t1_to_mni')
-b0_t1_to_mni.inputs.dimension = 4
+b0_t1_to_mni.inputs.dimension = 3
 b0_t1_to_mni.inputs.reference_image='/usr/share/fsl/5.0/data/standard/MNI152_T1_3mm_brain.nii.gz'
 b0_t1_to_mni.inputs.invert_transform_flags = [False]
 b0_t1_to_mni.inputs.interpolation = 'NearestNeighbor'
+b0_t1_to_mni.inputs.input_image_type = 3
 
 
 
@@ -189,7 +254,7 @@ preproc.connect([
 
 
 
-	(infosource,selectfiles,[('subject_id', 'subject_id'),('session_id', 'session_id')]),
+    (infosource,selectfiles,[('subject_id', 'subject_id'),('session_id', 'session_id')]),
     (selectfiles,fslroi,[('dki','in_file')]),
     (fslroi, bet, [('roi_file', 'in_file')]),
 
@@ -232,18 +297,31 @@ preproc.connect([
     (anat_skullstrip, anat_brain_only, [('out_file', 'in_file_b')]),
                                
     (anat_brain_only, calculate_ants_warp, [('out_file',  'moving_image')]),
-
+    (anat_brain_only, segment, [('out_file',  'in_files')]),
+    (segment,wmprob_split, [('probability_maps','inlist')]),
+    (wmprob_split,wmmapbin, [('out','in_file')]),
 
     (eddycorrect,fslroi_b0corr,[('out_corrected','in_file')]),
+
+    (fslroi_b0corr, linear_reg_b0_init, [('roi_file', 'in_file')]),
+    (anat_brain_only, linear_reg_b0_init,[('out_file', 'reference')]),
+
+    (linear_reg_b0_init, h2f2, [('out_matrix_file','inmat')]),
+
     (fslroi_b0corr, linear_reg_b0, [('roi_file', 'in_file')]),
     (anat_brain_only, linear_reg_b0,[('out_file', 'reference')]),
+    (h2f2, linear_reg_b0,[('opmat', 'in_matrix_file')]),
+    (wmmapbin, linear_reg_b0, [('out_file', 'wm_seg')]),
 
     (eddycorrect, app_xfm_lin, [('out_corrected','in_file')]),
     (anat_brain_only, app_xfm_lin, [('out_file','reference')]),
-    (linear_reg_b0, app_xfm_lin, [('out_matrix_file','in_matrix_file')]),
+
+    (linear_reg_b0, h2f, [('out_matrix_file','inmat')]),
+    (h2f, app_xfm_lin, [('opmat','in_matrix_file')]),
+
     (calculate_ants_warp, b0_t1_to_mni, [('composite_transform', 'transforms')]),
     (app_xfm_lin, b0_t1_to_mni, [('out_file','input_image')]),
-    (b0_t1_to_mni,datasink, [('output_image','@dkimni')] )
+    (b0_t1_to_mni,datasink, [('output_image','@dkimni')])
 
     #(bet, dtifit, [('mask_file', 'mask')]),
     #(selectfiles, dtifit, [('bvals', 'bvals')]),
