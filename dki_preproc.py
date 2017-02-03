@@ -248,7 +248,7 @@ dtifit = pe.Node(interface=fsl.DTIFit(), name='dtifit')
 dtifit_norm = pe.Node(interface=fsl.DTIFit(), name='dtifit_norm')
 
 
-#dkifit = pe.Node(interface=dipy.DKI(), name='dkifit')
+dkifit = pe.Node(interface=dipy.DKI(), name='dkifit')
 
 preproc.connect([
 
@@ -321,17 +321,17 @@ preproc.connect([
 
     (calculate_ants_warp, b0_t1_to_mni, [('composite_transform', 'transforms')]),
     (app_xfm_lin, b0_t1_to_mni, [('out_file','input_image')]),
-    (b0_t1_to_mni,datasink, [('output_image','@dkimni')])
+    (b0_t1_to_mni,datasink, [('output_image','@dkimni')]),
 
     #(bet, dtifit, [('mask_file', 'mask')]),
     #(selectfiles, dtifit, [('bvals', 'bvals')]),
     #(selectfiles, dtifit, [('bvecs', 'bvecs')]),
 
-    #(eddycorrect, dkifit, [('out_corrected', 'in_file')]),
-    #(selectfiles, dkifit, [('bvals', 'in_bval')]),
-    #(selectfiles, dkifit, [('bvecs', 'in_bvec')]),
+    (eddycorrect, dkifit, [('out_corrected', 'in_file')]),
+    (selectfiles, dkifit, [('bvals', 'in_bval')]),
+    (selectfiles, dkifit, [('bvecs', 'in_bvec')]),
 
-    #(dkifit,datasink,[('fa','@dkifitFA')]),
+    (dkifit,datasink,[('fa','@DKIFA')])
     #(dkifit,datasink,[('md','@dkifitMD')]),
     #(dkifit,datasink,[('rd','@dkifitRD')]),
     #(dkifit,datasink,[('ad','@dkifitAD')])#,
