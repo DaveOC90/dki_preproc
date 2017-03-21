@@ -17,8 +17,10 @@ def hex2float(inmat):
     '''
     # Read in data as list of lists, seperating strings based on double spaces and newline characters
     data=[l.strip().split('  ') for l in open(inmat,'rU')]
-    # convert each element to float
-    datanew=[map(lambda x: float.fromhex(x),d) for d in data]
+    # convert each element to float, if all all elements have the hex character for scientific notation (p)
+    # Assuming the p being present in all means it is hex, also assuming you wont have a mix of hex and float
+    datanew=[map(lambda x: float.fromhex(x),d) if all('p' in e for e in d) else d for d in data]
+
     # turn list of lists back into one long string
     opdatanew='\n'.join(['  '.join(map(str,d)) for d in datanew])
     # write mat to same directory as input mat
@@ -331,16 +333,19 @@ preproc.connect([
     (selectfiles, dkifit, [('bvals', 'in_bval')]),
     (selectfiles, dkifit, [('bvecs', 'in_bvec')]),
 
-    (dkifit,datasink,[('fa','@DKIFA')])
-    #(dkifit,datasink,[('md','@dkifitMD')]),
-    #(dkifit,datasink,[('rd','@dkifitRD')]),
-    #(dkifit,datasink,[('ad','@dkifitAD')])#,
-    #(dkifit,datasink,[('mk','@dkifitMK')]),
-    #(dkifit,datasink,[('ak','@dkifitAK')]),
-    #(dkifit,datasink,[('rk','@dkifitRK')])
+    (dkifit,datasink,[('fa','@.dkimodel.FA')]),
+    (dkifit,datasink,[('md','@.dkimodel.MD')]),
+    (dkifit,datasink,[('rd','@.dkimodel.RD')]),
+    (dkifit,datasink,[('ad','@.dkimodel.AD')]),
+    (dkifit,datasink,[('mk','@.dkimodel.MK')]),
+    (dkifit,datasink,[('ak','@.dkimodel.AK')]),
+    (dkifit,datasink,[('rk','@.dkimodel.RK')])
 
 
 ])
 
-preproc.run('MultiProc',plugin_args={'n_procs':4})
-preproc.write_graph()
+
+if __name__ == '__main__':
+
+     preproc.run('MultiProc',plugin_args={'n_procs':4})
+     preproc.write_graph()
