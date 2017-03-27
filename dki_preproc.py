@@ -191,11 +191,14 @@ b0_corrected_mean.inputs.dimension='T'
 #fslmaths my_hifi_b0 -Tmean my_hifi_b0
 #output is 'file'
 
+bet_b0corr = pe.Node(interface=fsl.BET(), name='bet_b0corr')
+bet_b0corr.inputs.mask = True
+bet_b0corr.inputs.frac = 0.34
+
+
 bet_b0 = pe.Node(interface=fsl.BET(), name='bet_b0')
 bet_b0.inputs.mask = True
 #bet my_hifi_b0 my_hifi_b0_brain -m
-
-
 
 eddycorrect = pe.Node(interface=fsl.Eddy(), name='eddycorrect')
 eddycorrect.inputs.in_index = '/home/davidoconner/git/dki_preproc/index.txt'
@@ -255,10 +258,10 @@ dkifit = pe.Node(interface=dipy.DKI(), name='dkifit')
 preproc.connect([
 
 
-
     (infosource,selectfiles,[('subject_id', 'subject_id'),('session_id', 'session_id')]),
-    (selectfiles,fslroi,[('dki','in_file')]),
-    (fslroi, bet, [('roi_file', 'in_file')]),
+    #(selectfiles,fslroi,[('dki','in_file')]),
+    #(fslroi, bet, [('roi_file', 'in_file')]),
+
 
     (selectfiles,mergelistb0,[('b0ap','in1')]),
     (selectfiles,mergelistb0,[('b0pa','in2')]),
@@ -275,71 +278,76 @@ preproc.connect([
     (topup,eddycorrect, [('out_fieldcoef','in_topup_fieldcoef')]),
     (topup,eddycorrect, [('out_movpar','in_topup_movpar')]),
 
-    (eddycorrect, dtifit, [('out_corrected', 'dwi')]),
-    (infosource, dtifit, [('subject_id', 'base_name')]),
-    (bet, dtifit, [('mask_file', 'mask')]),
-    (selectfiles, dtifit, [('bvals', 'bvals')]),
-    (selectfiles, dtifit, [('bvecs', 'bvecs')]),
-
-    (dtifit,datasink,[('FA','@dtifitFA')]),
-    (dtifit,datasink,[('L1','@dtifitL1')]),
-    (dtifit,datasink,[('L2','@dtifitL2')]),
-    (dtifit,datasink,[('L3','@dtifitL3')]),
-    (dtifit,datasink,[('MD','@dtifitMD')]),
-    (dtifit,datasink,[('MO','@dtifitMO')]),
-    (dtifit,datasink,[('S0','@dtifitS0')]),
-    (dtifit,datasink,[('V1','@dtifitV1')]),
-    (dtifit,datasink,[('V2','@dtifitV2')]),
-    (dtifit,datasink,[('V3','@dtifitV3')]),
-    (dtifit,datasink,[('tensor','@dtifittensor')]),
-
-
-    (selectfiles, anat_skullstrip, [('anat','in_file')]),
-    (selectfiles, anat_brain_only, [('anat','in_file_a')]),
-    (anat_skullstrip, anat_brain_only, [('out_file', 'in_file_b')]),
-                               
-    (anat_brain_only, calculate_ants_warp, [('out_file',  'moving_image')]),
-    (anat_brain_only, segment, [('out_file',  'in_files')]),
-    (segment,wmprob_split, [('probability_maps','inlist')]),
-    (wmprob_split,wmmapbin, [('out','in_file')]),
-
     (eddycorrect,fslroi_b0corr,[('out_corrected','in_file')]),
 
-    (fslroi_b0corr, linear_reg_b0_init, [('roi_file', 'in_file')]),
-    (anat_brain_only, linear_reg_b0_init,[('out_file', 'reference')]),
+    (fslroi_b0corr,bet_b0corr,[('roi_file','in_file')])
 
-    (linear_reg_b0_init, h2f2, [('out_matrix_file','inmat')]),
 
-    (fslroi_b0corr, linear_reg_b0, [('roi_file', 'in_file')]),
-    (anat_brain_only, linear_reg_b0,[('out_file', 'reference')]),
-    (h2f2, linear_reg_b0,[('opmat', 'in_matrix_file')]),
-    (wmmapbin, linear_reg_b0, [('out_file', 'wm_seg')]),
+    #(eddycorrect, dtifit, [('out_corrected', 'dwi')]),
+    #(infosource, dtifit, [('subject_id', 'base_name')]),
+    #(bet_b0corr, dtifit, [('mask_file', 'mask')]),
+    #(selectfiles, dtifit, [('bvals', 'bvals')]),
+    #(selectfiles, dtifit, [('bvecs', 'bvecs')]),
 
-    (eddycorrect, app_xfm_lin, [('out_corrected','in_file')]),
-    (anat_brain_only, app_xfm_lin, [('out_file','reference')]),
+    #(dtifit,datasink,[('FA','@dtifitFA')]),
+    #(dtifit,datasink,[('L1','@dtifitL1')]),
+    #(dtifit,datasink,[('L2','@dtifitL2')]),
+    #(dtifit,datasink,[('L3','@dtifitL3')]),
+    #(dtifit,datasink,[('MD','@dtifitMD')]),
+    #(dtifit,datasink,[('MO','@dtifitMO')]),
+    #(dtifit,datasink,[('S0','@dtifitS0')]),
+    #(dtifit,datasink,[('V1','@dtifitV1')]),
+    #(dtifit,datasink,[('V2','@dtifitV2')]),
+    #(dtifit,datasink,[('V3','@dtifitV3')]),
+    #(dtifit,datasink,[('tensor','@dtifittensor')])
 
-    (linear_reg_b0, h2f, [('out_matrix_file','inmat')]),
-    (h2f, app_xfm_lin, [('opmat','in_matrix_file')]),
 
-    (calculate_ants_warp, b0_t1_to_mni, [('composite_transform', 'transforms')]),
-    (app_xfm_lin, b0_t1_to_mni, [('out_file','input_image')]),
-    (b0_t1_to_mni,datasink, [('output_image','@dkimni')]),
+    #(selectfiles, anat_skullstrip, [('anat','in_file')]),
+    #(selectfiles, anat_brain_only, [('anat','in_file_a')]),
+    #(anat_skullstrip, anat_brain_only, [('out_file', 'in_file_b')]),
+                               
+    #(anat_brain_only, calculate_ants_warp, [('out_file',  'moving_image')]),
+    #(anat_brain_only, segment, [('out_file',  'in_files')]),
+    #(segment,wmprob_split, [('probability_maps','inlist')]),
+    #(wmprob_split,wmmapbin, [('out','in_file')]),
+
+    
+
+    #(fslroi_b0corr, linear_reg_b0_init, [('roi_file', 'in_file')]),
+    #(anat_brain_only, linear_reg_b0_init,[('out_file', 'reference')]),
+
+    #(linear_reg_b0_init, h2f2, [('out_matrix_file','inmat')]),
+
+    #(fslroi_b0corr, linear_reg_b0, [('roi_file', 'in_file')]),
+    #(anat_brain_only, linear_reg_b0,[('out_file', 'reference')]),
+    #(h2f2, linear_reg_b0,[('opmat', 'in_matrix_file')]),
+    #(wmmapbin, linear_reg_b0, [('out_file', 'wm_seg')]),
+
+    #(eddycorrect, app_xfm_lin, [('out_corrected','in_file')]),
+    #(anat_brain_only, app_xfm_lin, [('out_file','reference')]),
+
+    #(linear_reg_b0, h2f, [('out_matrix_file','inmat')]),
+    #(h2f, app_xfm_lin, [('opmat','in_matrix_file')]),
+
+    #(calculate_ants_warp, b0_t1_to_mni, [('composite_transform', 'transforms')]),
+    #(app_xfm_lin, b0_t1_to_mni, [('out_file','input_image')]),
+    #b0_t1_to_mni,datasink, [('output_image','@dkimni')]),
 
     #(bet, dtifit, [('mask_file', 'mask')]),
     #(selectfiles, dtifit, [('bvals', 'bvals')]),
     #(selectfiles, dtifit, [('bvecs', 'bvecs')]),
 
-    (eddycorrect, dkifit, [('out_corrected', 'in_file')]),
-    (selectfiles, dkifit, [('bvals', 'in_bval')]),
-    (selectfiles, dkifit, [('bvecs', 'in_bvec')]),
+    #(eddycorrect, dkifit, [('out_corrected', 'in_file')]),
+    #(selectfiles, dkifit, [('bvals', 'in_bval')]),
+    #(selectfiles, dkifit, [('bvecs', 'in_bvec')]),
 
-    (dkifit,datasink,[('fa','@.dkimodel.FA')]),
-    (dkifit,datasink,[('md','@.dkimodel.MD')]),
-    (dkifit,datasink,[('rd','@.dkimodel.RD')]),
-    (dkifit,datasink,[('ad','@.dkimodel.AD')]),
-    (dkifit,datasink,[('mk','@.dkimodel.MK')]),
-    (dkifit,datasink,[('ak','@.dkimodel.AK')]),
-    (dkifit,datasink,[('rk','@.dkimodel.RK')])
+    #(dkifit,datasink,[('fa','@.dkimodel.FA')]),
+    #(dkifit,datasink,[('md','@.dkimodel.MD')]),
+    #(dkifit,datasink,[('rd','@.dkimodel.RD')]),
+    #(dkifit,datasink,[('ad','@.dkimodel.AD')]),
+    #(dkifit,datasink,[('mk','@.dkimodel.MK')]),
+    #(dkifit,datasink,[('ak','@.dkimodel.AK')]),
+    #(dkifit,datasink,[('rk','@.dkimodel.RK')])
 
 
 ])

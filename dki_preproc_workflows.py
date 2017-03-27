@@ -179,9 +179,9 @@ def create_diff_preproc(name='diff_preproc'):
     fslroi.inputs.t_min = 0
     fslroi.inputs.t_size = 1
 
-    bet = pe.Node(interface=fsl.BET(), name='bet')
-    bet.inputs.mask = True
-    bet.inputs.frac = 0.34
+    #bet = pe.Node(interface=fsl.BET(), name='bet')
+    #bet.inputs.mask = True
+    #bet.inputs.frac = 0.34
 
 
     mergelistb0 = pe.Node(interface=util.Merge(2), name='mergelistb0')
@@ -214,17 +214,10 @@ def create_diff_preproc(name='diff_preproc'):
     #eddy --imain=data --mask=my_hifi_b0_brain_mask --acqp=acqparafslviewms.txt --index=index.txt --bvecs=bvecs --bvals=bvals --topup=my_topup_results --out=eddy_corrected_data
 
 
-    ## Convert eddy mat to float
-    h2f = pe.Node(interface=hexmat2fltmat,name='h2f')
-
-
-
-
-
     diff_preproc.connect([
 
-    (inputspec,fslroi,[('diff','in_file')]),
-    (fslroi, bet, [('roi_file', 'in_file')]),
+    #(inputspec,fslroi,[('diff','in_file')]),
+    #(fslroi, bet, [('roi_file', 'in_file')]),
 
     (inputspec,mergelistb0,[('b0ap','in1')]),
     (inputspec,mergelistb0,[('b0pa','in2')]),
@@ -265,6 +258,10 @@ def create_diff_norm(name='diff_norm'):
     outputspec = pe.Node(util.IdentityInterface(fields=['diff_norm']),
                          name='outputspec')
 
+
+    ## Convert eddy mat to float
+    h2f = pe.Node(interface=hexmat2fltmat,name='h2f')
+
     ## COnvert b0 flirt to anat initialization mat to float
     h2f2 = pe.Node(interface=hexmat2fltmat,name='h2f2')
 
@@ -304,25 +301,25 @@ def create_diff_norm(name='diff_norm'):
 
     diff_norm.connect([
 
-    (eddycorrect,fslroi_b0corr,[('out_corrected','in_file')]),
+    (inputspec,fslroi_b0corr,[('diff_preproc','in_file')]),
 
     (fslroi_b0corr, linear_reg_b0_init, [('roi_file', 'in_file')]),
-    (anat_brain_only, linear_reg_b0_init,[('out_file', 'reference')]),
+    (inputspec, linear_reg_b0_init,[('ss_brain', 'reference')]),
 
     (linear_reg_b0_init, h2f2, [('out_matrix_file','inmat')]),
 
     (fslroi_b0corr, linear_reg_b0, [('roi_file', 'in_file')]),
-    (anat_brain_only, linear_reg_b0,[('out_file', 'reference')]),
+    (inputspec, linear_reg_b0,[('ss_brain', 'reference')]),
     (h2f2, linear_reg_b0,[('opmat', 'in_matrix_file')]),
-    (wmmapbin, linear_reg_b0, [('out_file', 'wm_seg')]),
+    (inputspec, linear_reg_b0, [('wm_map_bin', 'wm_seg')]),
 
-    (eddycorrect, app_xfm_lin, [('out_corrected','in_file')]),
-    (anat_brain_only, app_xfm_lin, [('out_file','reference')]),
+    (inputspec, app_xfm_lin, [('diff_preproc','in_file')]),
+    (inputspec, app_xfm_lin, [('ss_brain','reference')]),
 
     (linear_reg_b0, h2f, [('out_matrix_file','inmat')]),
     (h2f, app_xfm_lin, [('opmat','in_matrix_file')]),
 
-    (calculate_ants_warp, b0_t1_to_mni, [('composite_transform', 'transforms')]),
+    (inputspec, b0_t1_to_mni, [('mni_xfm', 'transforms')]),
     (app_xfm_lin, b0_t1_to_mni, [('out_file','input_image')]),
     (b0_t1_to_mni,outputspec, [('output_image','diff_norm')]),
 
@@ -331,11 +328,105 @@ def create_diff_norm(name='diff_norm'):
     return diff_norm
 
 def create_tensor_model(name='tensor_model'):
+
+    tensor_model = pe.Workflow(name=name)
+    
+    inputspec = pe.Node(util.IdentityInterface(fields=['diff_processed',
+                                                       'bvals',
+                                                       'bvecs',
+                                                       'mask',
+                                                       'base_name']),
+                        name='inputspec')
+
+    outputspec = pe.Node(util.IdentityInterface(fields=['FA',
+                                                        'L1',
+                                                        'L2',
+                                                        'L3',
+                                                        'MD',
+                                                        'MO',
+                                                        'S0',
+                                                        'V1',
+                                                        'V2',
+                                                        'V3',
+                                                        'tensor']),
+                        name='outputspec')
+
+
+    fslroi_b0preproc = pe.Node(interface=fsl.ExtractROI(), name='fslroi_b0preproc')
+    fslroi_b0preproc.inputs.t_min = 0
+    fslroi_b0preproc.inputs.t_size = 1
+
+    bet_b0preproc = pe.Node(interface=fsl.BET(), name='bet_b0preproc')
+    bet_b0preproc.inputs.mask = True
+    bet_b0preproc.inputs.frac = 0.34
+
     dtifit = pe.Node(interface=fsl.DTIFit(), name='dtifit')
 
+    tensor_model.connect([
+
+    (inputspec, fslroi_b0preproc, [('diff_processed', 'in_file')]),
+    (fslroi_b0preproc, bet_b0preproc, [('roi_file', 'in_file')]),
+
+    (inputspec, dtifit, [('diff_processed', 'dwi')]),
+    (inputspec, dtifit, [('base_name', 'base_name')]),
+    (bet_b0preproc, dtifit, [('mask_file', 'mask')]),
+    (inputspec, dtifit, [('bvals', 'bvals')]),
+    (inputspec, dtifit, [('bvecs', 'bvecs')]),
+
+    (dtifit,outputspec,[('FA','FA')]),
+    (dtifit,outputspec,[('L1','L1')]),
+    (dtifit,outputspec,[('L2','L2')]),
+    (dtifit,outputspec,[('L3','L3')]),
+    (dtifit,outputspec,[('MD','MD')]),
+    (dtifit,outputspec,[('MO','MO')]),
+    (dtifit,outputspec,[('S0','S0')]),
+    (dtifit,outputspec,[('V1','V1')]),
+    (dtifit,outputspec,[('V2','V2')]),
+    (dtifit,outputspec,[('V3','V3')]),
+    (dtifit,outputspec,[('tensor','tensor')])
+
+    ])
+
+    return tensor_model
+
 def create_kurtosis_model(name='kurtosis_model'):
+
+    kurtosis_model = pe.Workflow(name=name)
+    
+    inputspec = pe.Node(util.IdentityInterface(fields=['diff_processed',
+                                                       'bvals',
+                                                       'bvecs']),
+                        name='inputspec')
+
+    outputspec = pe.Node(util.IdentityInterface(fields=['fa',
+                                                        'md',
+                                                        'rd',
+                                                        'ad',
+                                                        'mk',
+                                                        'ak',
+                                                        'rk']),
+                        name='outputspec')
+
     dkifit = pe.Node(interface=dipy.DKI(), name='dkifit')
 
+
+    kurtosis_model.connect([
+
+    (inputspec, dkifit, [('diff_processed', 'in_file')]),
+    (inputspec, dkifit, [('bvals', 'in_bval')]),
+    (inputspec, dkifit, [('bvecs', 'in_bvec')]),
+
+    (dkifit,outputspec,[('fa','fa')]),
+    (dkifit,outputspec,[('md','md')]),
+    (dkifit,outputspec,[('rd','rd')]),
+    (dkifit,outputspec,[('ad','ad')]),
+    (dkifit,outputspec,[('mk','mk')]),
+    (dkifit,outputspec,[('ak','ak')]),
+    (dkifit,outputspec,[('rk','rk')])
+
+    ])
+
+    return kurtosis_model
 
 
 if __name__ == '__main__':
@@ -376,6 +467,18 @@ if __name__ == '__main__':
 
     diff_preproc=create_diff_preproc()
 
+    anat_preproc=create_anat_preproc()
+
+    diff_norm=create_diff_norm()
+
+    dtifit_native=create_tensor_model(name='dtifit_native')
+
+    dkifit_native=create_kurtosis_model(name='dkifit_native')
+
+    dtifit_norm=create_tensor_model(name='dtifit_norm')
+
+    dkifit_norm=create_kurtosis_model(name='dkifit_norm')
+
 
     preproc.connect([
 
@@ -383,43 +486,37 @@ if __name__ == '__main__':
         
         (selectfiles,diff_preproc,[('dki','inputspec.diff')]),
         (selectfiles,diff_preproc,[('b0ap','inputspec.b0ap')]),
-        (selectfiles,diff_preproc,[('b0pa','inputspec.b0pa')]),
-        
+        (selectfiles,diff_preproc,[('b0pa','inputspec.b0pa')]),        
         (selectfiles, diff_preproc, [('bvals', 'inputspec.bvals')]),
-        (selectfiles, diff_preproc, [('bvecs', 'inputspec.bvecs')])
+        (selectfiles, diff_preproc, [('bvecs', 'inputspec.bvecs')]),
 
-        #(eddycorrect, dtifit, [('out_corrected', 'dwi')]),
-        #(infosource, dtifit, [('subject_id', 'base_name')]),
-        #(bet, dtifit, [('mask_file', 'mask')]),
-        #(selectfiles, dtifit, [('bvals', 'bvals')]),
-        #(selectfiles, dtifit, [('bvecs', 'bvecs')]),
+        (selectfiles,anat_preproc,[('anat','inputspec.anat')]),
 
-        #(dtifit,datasink,[('FA','@.dtifit.FA')]),
-        #(dtifit,datasink,[('L1','@.dtifit.L1')]),
-        #(dtifit,datasink,[('L2','@.dtifit.L2')]),
-        #(dtifit,datasink,[('L3','@.dtifit.L3')]),
-        #(dtifit,datasink,[('MD','@.dtifit.MD')]),
-        #(dtifit,datasink,[('MO','@.dtifit.MO')]),
-        #(dtifit,datasink,[('S0','@.dtifit.S0')]),
-        #(dtifit,datasink,[('V1','@.dtifit.V1')]),
-        #(dtifit,datasink,[('V2','@.dtifit.V2')]),
-        #(dtifit,datasink,[('V3','@.dtifit.V3')]),
-        #(dtifit,datasink,[('tensor','@.dtifit.tensor')]),
+        (diff_preproc,diff_norm,[('outputspec.diff_preproc','inputspec.diff_preproc')]),
+        (anat_preproc,diff_norm,[('outputspec.ss_brain','inputspec.ss_brain')]),
+        (anat_preproc,diff_norm,[('outputspec.wm_map_bin','inputspec.wm_map_bin')]),
+        (anat_preproc,diff_norm,[('outputspec.mni_xfm','inputspec.mni_xfm')]),
 
 
 
 
-        #(eddycorrect, dkifit, [('out_corrected', 'in_file')]),
-        #(selectfiles, dkifit, [('bvals', 'in_bval')]),
-        #(selectfiles, dkifit, [('bvecs', 'in_bvec')]),
+        (diff_preproc, dtifit_native, [('outputspec.diff_preproc', 'inputspec.diff_processed')]),
+        (infosource, dtifit_native, [('subject_id', 'inputspec.base_name')]),
+        (selectfiles, dtifit_native, [('bvals', 'inputspec.bvals')]),
+        (selectfiles, dtifit_native, [('bvecs', 'inputspec.bvecs')]),
 
-        #(dkifit,datasink,[('fa','@.dkimodel.FA')]),
-        #(dkifit,datasink,[('md','@.dkimodel.MD')]),
-        #(dkifit,datasink,[('rd','@.dkimodel.RD')]),
-        #(dkifit,datasink,[('ad','@.dkimodel.AD')]),
-        #(dkifit,datasink,[('mk','@.dkimodel.MK')]),
-        #(dkifit,datasink,[('ak','@.dkimodel.AK')]),
-        #(dkifit,datasink,[('rk','@.dkimodel.RK')])
+        (diff_preproc, dkifit_native, [('outputspec.diff_preproc', 'inputspec.diff_processed')]),
+        (selectfiles, dkifit_native, [('bvals', 'inputspec.bvals')]),
+        (selectfiles, dkifit_native, [('bvecs', 'inputspec.bvecs')]),
+
+        (diff_preproc, dtifit_norm, [('outputspec.diff_preproc', 'inputspec.diff_processed')]),
+        (infosource, dtifit_norm, [('subject_id', 'inputspec.base_name')]),
+        (selectfiles, dtifit_norm, [('bvals', 'inputspec.bvals')]),
+        (selectfiles, dtifit_norm, [('bvecs', 'inputspec.bvecs')]),
+
+        (diff_preproc, dkifit_norm, [('outputspec.diff_preproc', 'inputspec.diff_processed')]),
+        (selectfiles, dkifit_norm, [('bvals', 'inputspec.bvals')]),
+        (selectfiles, dkifit_norm, [('bvecs', 'inputspec.bvecs')])
 
 
     ])
