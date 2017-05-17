@@ -3,8 +3,46 @@ from nipype.interfaces import slicer
 import nipype.interfaces.io as nio
 import nipype.interfaces.utility as util
 import os,glob,sys
+import xml, yaml
+import numpy as np
+import re
 
-def create_diff_qc(name='diff_qc'):
+example_change_dict={
+'change1':{'tag':'entry','parameter':'QC_QCedDWIFileNameSuffix','value0':'qced.nrrd'}
+}
+
+
+def bvs_to_mat(ipfile):
+    lines=[l.strip() for l in open(ipfile, 'rU')]
+    newmat=np.array([np.array(map(float,re.findall(r"[-+]?\d+[^.]|[-+]?\d+\.\d+",l))) for l in lines])
+    newbv='\n'.join([' '.join(map(str,n)) for n in newmat])
+
+    return newmat
+
+def update_tutorial_xml(xmlfile, replaceyaml, bvalpath, bvecpath):
+    
+    #with open(replaceyaml,'rU') as ipf:
+    #    changedict=yaml.load(ipf)
+    bvals=bvs_to_mat(bvalpath)
+    bvecs=bvs_to_mat(bvecpath)
+    
+    xmlroot=xml.etree.ElementTree.parse(xmlfile).getroot()
+
+    for key in example_change_dict.keys():
+        changetag=example_change_dict[key]['tag']
+        for entry in xmlroot.iter(changetag):
+            eatt=entry.attrib
+            #print entry.attrib
+            if example_change_dict[key]['parameter'] == eatt['parameter']:
+                valind=0
+                for sube in entry.getchildren():
+                    if sube.tag == 'value' and 'value'+str(valind) in example_change_dict[key].keys():
+                        sube.text=example_change_dict[key]['value'+str(valind)]
+                        valind+=1
+
+    return xmlroot
+
+def create_diff_qc(name='diff_qc'): 
 
     diff_qc=pe.Workflow(name=name)
 
